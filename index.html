@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Assistant AI - Your Personal Investment Advisor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+    <style>
+        @keyframes gradient {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        .gradient-bg {
+            background: linear-gradient(-45deg, #1a1a2e, #16213e, #0f3460, #1a1a2e);
+            background-size: 400% 400%;
+            animation: gradient 15s ease infinite;
+        }
+        .glass {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .pulse-glow {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .7; }
+        }
+        .chat-bubble {
+            animation: slideUp 0.3s ease-out;
+        }
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .spinner {
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-top: 3px solid #3b82f6;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="gradient-bg min-h-screen">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Utility Functions
+        const formatCurrency = (value) => {
+            return new Intl.NumberFormat('en-US', {
+                style: 'currency',
+                currency: 'USD',
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            }).format(value);
+        };
+
+        const formatPercent = (value) => {
+            return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
+        };
+
+        // Bitcoin Halving Cycle Detection
+        const detectCyclePhase = () => {
+            const halvingDates = [
+                new Date('2024-04-20'),
+                new Date('2028-04-20'),
+                new Date('2032-04-20')
+            ];
+            
+            const now = new Date();
+            const lastHalving = halvingDates.find(d => d < now) || halvingDates[0];
+            const nextHalving = halvingDates.find(d => d > now) || halvingDates[halvingDates.length - 1];
+            
+            const timeSinceHalving = (now - lastHalving) / (1000 * 60 * 60 * 24);
+            const totalCycleDays = 365.25 * 4;
+            const cycleProgress = (timeSinceHalving / totalCycleDays) * 100;
+            
+            let phase = '';
+            let phaseColor = '';
+            let phaseDesc = '';
+            
+            if (cycleProgress < 25) {
+                phase = 'Accumulation';
+                phaseColor = 'text-blue-400';
+                phaseDesc = 'Early stage - Best time to accumulate';
+            } else if (cycleProgress < 50) {
+                phase = 'Bull Market';
+                phaseColor = 'text-green-400';
+                phaseDesc = 'Growth phase - Strong upward momentum';
+            } else if (cycleProgress < 75) {
+                phase = 'Distribution';
+                phaseColor = 'text-yellow-400';
+                phaseDesc = 'Late stage - Consider taking profits';
+            } else {
+                phase = 'Bear Market';
+                phaseColor = 'text-red-400';
+                phaseDesc = 'Correction phase - Wait for better entries';
+            }
+            
+            return { phase, phaseColor, phaseDesc, cycleProgress: cycleProgress.toFixed(1), nextHalving };
+        };
+
+        // Mock Market Data (In production, this would fetch from real APIs)
+        const fetchMarketData = async () => {
+            // Simulating API call with realistic data
+            return {
+                btc: { price: 95234.50, change24h: 2.34, dominance: 54.3 },
+                eth: { price: 3421.80, change24h: 1.87, dominance: 16.8 },
+                usdtDominance: 5.2,
+                totalMarketCap: 2.87,
+                fearGreedIndex: 72,
+                altcoinSeasonIndex: 45
+            };
+        };
+
+        // Main App Component
+        function CryptoAssistant() {
+            const [activeTab, setActiveTab] = useState('chat');
+            const [messages, setMessages] = useState([{
+                role: 'assistant',
+                content: "👋 Welcome to your Crypto Assistant! I'm powered by AI and equipped with real-time market data, cycle analysis, and portfolio tracking. How can I help you today?"
+            }]);
+            const [input, setInput] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [portfolio, setPortfolio] = useState([]);
+            const [marketData, setMarketData] = useState(null);
+            const [cycleData, setCycleData] = useState(null);
+            const messagesEndRef = useRef(null);
+
+            useEffect(() => {
+                // Load initial data
+                const loadData = async () => {
+                    const data = await fetchMarketData();
+                    setMarketData(data);
+                    setCycleData(detectCyclePhase());
+                };
+                loadData();
+
+                // Load saved portfolio from localStorage
+                const saved = localStorage.getItem('crypto-portfolio');
+                if (saved) {
+                    setPortfolio(JSON.parse(saved));
+                }
+            }, []);
+
+            useEffect(() => {
+                messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+            }, [messages]);
+
+            const savePortfolio = (newPortfolio) => {
+                setPortfolio(newPortfolio);
+                localStorage.setItem('crypto-portfolio', JSON.stringify(newPortfolio));
+            };
+
+            const analyzePortfolio = () => {
+                if (portfolio.length === 0) return null;
+
+                const total = portfolio.reduce((sum, item) => {
+                    const currentPrice = item.symbol === 'BTC' ? marketData.btc.price : marketData.eth.price;
+                    return sum + (item.quantity * currentPrice);
+                }, 0);
+
+                const totalCost = portfolio.reduce((sum, item) => sum + (item.quantity * item.buyPrice), 0);
+                const pnl = total - totalCost;
+                const pnlPercent = (pnl / totalCost) * 100;
+
+                return { total, totalCost, pnl, pnlPercent };
+            };
+
+            const getRotationStatus = () => {
+                if (!marketData) return 'Loading...';
+                
+                const { btc, usdtDominance } = marketData;
+                
+                if (btc.dominance > 55 && usdtDominance < 4) {
+                    return {
+                        status: 'BTC Dominance Phase',
+                        description: 'Money flowing into Bitcoin. Alts may underperform.',
+                        color: 'text-orange-400'
+                    };
+                } else if (btc.dominance < 50 && usdtDominance < 4) {
+                    return {
+                        status: 'Alt Season',
+                        description: 'Capital rotating to altcoins. High opportunity in alts.',
+                        color: 'text-green-400'
+                    };
+                } else if (usdtDominance > 5) {
+                    return {
+                        status: 'Risk-Off',
+                        description: 'Money flowing to stablecoins. Market uncertainty.',
+                        color: 'text-red-400'
+                    };
+                } else {
+                    return {
+                        status: 'Transitional',
+                        description: 'Market in transition. Watch for clearer signals.',
+                        color: 'text-yellow-400'
+                    };
+                }
+            };
+
+            const handleSendMessage = async () => {
+                if (!input.trim() || loading) return;
+
+                const userMessage = input.trim();
+                setInput('');
+                setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+                setLoading(true);
+
+                try {
+                    // Prepare context for Claude
+                    const portfolioContext = portfolio.length > 0 ? 
+                        `User Portfolio: ${JSON.stringify(portfolio.map(p => ({
+                            symbol: p.symbol,
+                            quantity: p.quantity,
+                            buyPrice: p.buyPrice,
+                            currentPrice: p.symbol === 'BTC' ? marketData.btc.price : marketData.eth.price
+                        })))}` : 
+                        'User has no portfolio yet.';
+
+                    const marketContext = marketData ? `
+                        Current Market Data:
+                        - BTC: $${marketData.btc.price.toLocaleString()} (${formatPercent(marketData.btc.change24h)})
+                        - BTC Dominance: ${marketData.btc.dominance}%
+                        - ETH: $${marketData.eth.price.toLocaleString()} (${formatPercent(marketData.eth.change24h)})
+                        - USDT Dominance: ${marketData.usdtDominance}%
+                        - Fear & Greed Index: ${marketData.fearGreedIndex} (${marketData.fearGreedIndex > 70 ? 'Extreme Greed' : marketData.fearGreedIndex > 50 ? 'Greed' : 'Fear'})
+                        - Altcoin Season Index: ${marketData.altcoinSeasonIndex}
+                    ` : '';
+
+                    const cycleContext = cycleData ? `
+                        Bitcoin 4-Year Cycle:
+                        - Current Phase: ${cycleData.phase}
+                        - Cycle Progress: ${cycleData.cycleProgress}%
+                        - Phase Description: ${cycleData.phaseDesc}
+                    ` : '';
+
+                    const rotationStatus = getRotationStatus();
+
+                    const systemPrompt = `You are an expert crypto investment assistant. You provide clear, actionable advice based on:
+                    1. Portfolio analysis
+                    2. Bitcoin 4-year halving cycles
+                    3. Money rotation patterns (BTC → Alts → Memes)
+                    4. Technical indicators
+                    5. Market sentiment
+
+                    ${portfolioContext}
+                    ${marketContext}
+                    ${cycleContext}
+                    
+                    Money Rotation Status: ${rotationStatus.status} - ${rotationStatus.description}
+
+                    IMPORTANT INSTRUCTIONS:
+                    - Be conversational and helpful, not overly formal
+                    - Give specific, actionable advice
+                    - Use the user's portfolio data when relevant
+                    - Reference the current cycle phase and rotation status in your advice
+                    - Keep responses concise (2-3 paragraphs max)
+                    - Use emojis sparingly for key points
+                    - If user asks to add/remove coins, acknowledge but explain you can't modify the portfolio directly (they need to use the Portfolio tab)
+                    - Always consider risk management
+                    
+                    Respond naturally to: "${userMessage}"`;
+
+                    // Call Claude API
+                    const response = await fetch("https://api.anthropic.com/v1/messages", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({
+                            model: "claude-sonnet-4-20250514",
+                            max_tokens: 1000,
+                            messages: [
+                                ...messages.filter(m => m.role !== 'system').map(m => ({
+                                    role: m.role,
+                                    content: m.content
+                                })),
+                                { role: "user", content: systemPrompt }
+                            ]
+                        })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('Failed to get response from AI');
+                    }
+
+                    const data = await response.json();
+                    const assistantMessage = data.content[0].text;
+
+                    setMessages(prev => [...prev, { role: 'assistant', content: assistantMessage }]);
+                } catch (error) {
+                    console.error('Error:', error);
+                    setMessages(prev => [...prev, { 
+                        role: 'assistant', 
+                        content: '⚠️ Sorry, I encountered an error. Please try again. Make sure you have internet connectivity.' 
+                    }]);
+                }
+
+                setLoading(false);
+            };
+
+            const addToPortfolio = (symbol, quantity, buyPrice) => {
+                const newItem = {
+                    id: Date.now(),
+                    symbol,
+                    quantity: parseFloat(quantity),
+                    buyPrice: parseFloat(buyPrice),
+                    addedDate: new Date().toISOString()
+                };
+                savePortfolio([...portfolio, newItem]);
+            };
+
+            const removeFromPortfolio = (id) => {
+                savePortfolio(portfolio.filter(item => item.id !== id));
+            };
+
+            const portfolioAnalysis = analyzePortfolio();
+            const rotationStatus = getRotationStatus();
+
+            return (
+                <div className="min-h-screen text-white p-4">
+                    <div className="max-w-7xl mx-auto">
+                        {/* Header */}
+                        <div className="glass rounded-2xl p-6 mb-6">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
+                                        Crypto Assistant AI
+                                    </h1>
+                                    <p className="text-gray-400 mt-1">Your intelligent crypto investment advisor</p>
+                                </div>
+                                <div className="text-right">
+                                    {cycleData && (
+                                        <div>
+                                            <div className={`text-xl font-bold ${cycleData.phaseColor}`}>
+                                                {cycleData.phase}
+                                            </div>
+                                            <div className="text-sm text-gray-400">
+                                                Cycle: {cycleData.cycleProgress}%
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Market Overview */}
+                        {marketData && (
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                                <div className="glass rounded-xl p-4">
+                                    <div className="text-gray-400 text-sm mb-1">Bitcoin</div>
+                                    <div className="text-2xl font-bold">${marketData.btc.price.toLocaleString()}</div>
+                                    <div className={`text-sm ${marketData.btc.change24h >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                        {formatPercent(marketData.btc.change24h)} 24h
+                                    </div>
+                                </div>
+                                <div className="glass rounded-xl p-4">
+                                    <div className="text-gray-400 text-sm mb-1">Ethereum</div>
+                                    <div className="text-2xl font-bold">${marketData.eth.price.toLocaleString()}</div>
+                                    <div className={`text-sm ${marketData.eth.change24h >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                        {formatPercent(marketData.eth.change24h)} 24h
+                                    </div>
+                                </div>
+                                <div className="glass rounded-xl p-4">
+                                    <div className="text-gray-400 text-sm mb-1">Fear & Greed</div>
+                                    <div className="text-2xl font-bold">{marketData.fearGreedIndex}</div>
+                                    <div className="text-sm text-yellow-400">
+                                        {marketData.fearGreedIndex > 70 ? 'Extreme Greed' : 
+                                         marketData.fearGreedIndex > 50 ? 'Greed' : 
+                                         marketData.fearGreedIndex > 30 ? 'Neutral' : 'Fear'}
+                                    </div>
+                                </div>
+                                <div className="glass rounded-xl p-4">
+                                    <div className="text-gray-400 text-sm mb-1">Rotation Status</div>
+                                    <div className={`text-lg font-bold ${rotationStatus.color}`}>
+                                        {rotationStatus.status}
+                                    </div>
+                                    <div className="text-xs text-gray-400 mt-1">
+                                        BTC Dom: {marketData.btc.dominance}%
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Tabs */}
+                        <div className="glass rounded-2xl p-2 mb-6 flex gap-2">
+                            <button
+                                onClick={() => setActiveTab('chat')}
+                                className={`flex-1 py-3 px-6 rounded-xl font-semibold transition-all ${
+                                    activeTab === 'chat' 
+                                        ? 'bg-blue-500 text-white' 
+                                        : 'text-gray-400 hover:text-white'
+                                }`}
+                            >
+                                💬 AI Chat
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('portfolio')}
+                                className={`flex-1 py-3 px-6 rounded-xl font-semibold transition-all ${
+                                    activeTab === 'portfolio' 
+                                        ? 'bg-blue-500 text-white' 
+                                        : 'text-gray-400 hover:text-white'
+                                }`}
+                            >
+                                💼 Portfolio
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('insights')}
+                                className={`flex-1 py-3 px-6 rounded-xl font-semibold transition-all ${
+                                    activeTab === 'insights' 
+                                        ? 'bg-blue-500 text-white' 
+                                        : 'text-gray-400 hover:text-white'
+                                }`}
+                            >
+                                📊 Market Insights
+                            </button>
+                        </div>
+
+                        {/* Chat Tab */}
+                        {activeTab === 'chat' && (
+                            <div className="glass rounded-2xl p-6 h-[600px] flex flex-col">
+                                <div className="flex-1 overflow-y-auto mb-4 space-y-4">
+                                    {messages.map((msg, idx) => (
+                                        <div
+                                            key={idx}
+                                            className={`chat-bubble flex ${
+                                                msg.role === 'user' ? 'justify-end' : 'justify-start'
+                                            }`}
+                                        >
+                                            <div
+                                                className={`max-w-[80%] p-4 rounded-2xl ${
+                                                    msg.role === 'user'
+                                                        ? 'bg-blue-500 text-white'
+                                                        : 'bg-gray-800 text-gray-100'
+                                                }`}
+                                            >
+                                                <div className="whitespace-pre-wrap">{msg.content}</div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {loading && (
+                                        <div className="flex justify-start">
+                                            <div className="bg-gray-800 p-4 rounded-2xl">
+                                                <div className="spinner"></div>
+                                            </div>
+                                        </div>
+                                    )}
+                                    <div ref={messagesEndRef} />
+                                </div>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        value={input}
+                                        onChange={(e) => setInput(e.target.value)}
+                                        onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                                        placeholder="Ask me anything about crypto investing..."
+                                        className="flex-1 bg-gray-800 text-white px-4 py-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        disabled={loading}
+                                    />
+                                    <button
+                                        onClick={handleSendMessage}
+                                        disabled={loading || !input.trim()}
+                                        className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-600 px-6 py-3 rounded-xl font-semibold transition-all"
+                                    >
+                                        Send
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Portfolio Tab */}
+                        {activeTab === 'portfolio' && (
+                            <div className="glass rounded-2xl p-6">
+                                <h2 className="text-2xl font-bold mb-6">Your Portfolio</h2>
+                                
+                                {portfolioAnalysis && (
+                                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                                        <div className="bg-gray-800 rounded-xl p-4">
+                                            <div className="text-gray-400 text-sm mb-1">Total Value</div>
+                                            <div className="text-2xl font-bold text-white">
+                                                {formatCurrency(portfolioAnalysis.total)}
+                                            </div>
+                                        </div>
+                                        <div className="bg-gray-800 rounded-xl p-4">
+                                            <div className="text-gray-400 text-sm mb-1">Total Cost</div>
+                                            <div className="text-2xl font-bold text-white">
+                                                {formatCurrency(portfolioAnalysis.totalCost)}
+                                            </div>
+                                        </div>
+                                        <div className="bg-gray-800 rounded-xl p-4">
+                                            <div className="text-gray-400 text-sm mb-1">P&L</div>
+                                            <div className={`text-2xl font-bold ${portfolioAnalysis.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                {formatCurrency(portfolioAnalysis.pnl)}
+                                            </div>
+                                        </div>
+                                        <div className="bg-gray-800 rounded-xl p-4">
+                                            <div className="text-gray-400 text-sm mb-1">P&L %</div>
+                                            <div className={`text-2xl font-bold ${portfolioAnalysis.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                {formatPercent(portfolioAnalysis.pnlPercent)}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                <PortfolioManager
+                                    portfolio={portfolio}
+                                    marketData={marketData}
+                                    onAdd={addToPortfolio}
+                                    onRemove={removeFromPortfolio}
+                                />
+                            </div>
+                        )}
+
+                        {/* Insights Tab */}
+                        {activeTab === 'insights' && (
+                            <MarketInsights 
+                                marketData={marketData} 
+                                cycleData={cycleData}
+                                rotationStatus={rotationStatus}
+                            />
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        // Portfolio Manager Component
+        function PortfolioManager({ portfolio, marketData, onAdd, onRemove }) {
+            const [symbol, setSymbol] = useState('BTC');
+            const [quantity, setQuantity] = useState('');
+            const [buyPrice, setBuyPrice] = useState('');
+
+            const handleAdd = () => {
+                if (quantity && buyPrice) {
+                    onAdd(symbol, quantity, buyPrice);
+                    setQuantity('');
+                    setBuyPrice('');
+                }
+            };
+
+            return (
+                <div>
+                    <div className="bg-gray-800 rounded-xl p-4 mb-6">
+                        <h3 className="text-lg font-semibold mb-4">Add to Portfolio</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                            <select
+                                value={symbol}
+                                onChange={(e) => setSymbol(e.target.value)}
+                                className="bg-gray-700 text-white px-4 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            >
+                                <option value="BTC">Bitcoin (BTC)</option>
+                                <option value="ETH">Ethereum (ETH)</option>
+                            </select>
+                            <input
+                                type="number"
+                                placeholder="Quantity"
+                                value={quantity}
+                                onChange={(e) => setQuantity(e.target.value)}
+                                className="bg-gray-700 text-white px-4 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                            <input
+                                type="number"
+                                placeholder="Buy Price"
+                                value={buyPrice}
+                                onChange={(e) => setBuyPrice(e.target.value)}
+                                className="bg-gray-700 text-white px-4 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                            <button
+                                onClick={handleAdd}
+                                className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold transition-all"
+                            >
+                                Add Position
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="space-y-3">
+                        {portfolio.length === 0 ? (
+                            <div className="text-center text-gray-400 py-8">
+                                No positions yet. Add your first position above!
+                            </div>
+                        ) : (
+                            portfolio.map((item) => {
+                                const currentPrice = item.symbol === 'BTC' ? marketData?.btc.price : marketData?.eth.price;
+                                const currentValue = item.quantity * currentPrice;
+                                const cost = item.quantity * item.buyPrice;
+                                const pnl = currentValue - cost;
+                                const pnlPercent = (pnl / cost) * 100;
+
+                                return (
+                                    <div key={item.id} className="bg-gray-800 rounded-xl p-4 flex items-center justify-between">
+                                        <div className="flex-1">
+                                            <div className="flex items-center gap-3 mb-2">
+                                                <div className="text-xl font-bold">{item.symbol}</div>
+                                                <div className="text-gray-400">
+                                                    {item.quantity} @ {formatCurrency(item.buyPrice)}
+                                                </div>
+                                            </div>
+                                            <div className="grid grid-cols-3 gap-4 text-sm">
+                                                <div>
+                                                    <div className="text-gray-400">Current</div>
+                                                    <div className="font-semibold">{formatCurrency(currentPrice)}</div>
+                                                </div>
+                                                <div>
+                                                    <div className="text-gray-400">Value</div>
+                                                    <div className="font-semibold">{formatCurrency(currentValue)}</div>
+                                                </div>
+                                                <div>
+                                                    <div className="text-gray-400">P&L</div>
+                                                    <div className={`font-semibold ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                        {formatCurrency(pnl)} ({formatPercent(pnlPercent)})
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={() => onRemove(item.id)}
+                                            className="ml-4 bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg transition-all"
+                                        >
+                                            Remove
+                                        </button>
+                                    </div>
+                                );
+                            })
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        // Market Insights Component
+        function MarketInsights({ marketData, cycleData, rotationStatus }) {
+            if (!marketData || !cycleData) return null;
+
+            return (
+                <div className="glass rounded-2xl p-6">
+                    <h2 className="text-2xl font-bold mb-6">Market Insights</h2>
+
+                    <div className="space-y-6">
+                        {/* Cycle Analysis */}
+                        <div className="bg-gray-800 rounded-xl p-6">
+                            <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
+                                🔄 Bitcoin 4-Year Cycle
+                            </h3>
+                            <div className="space-y-3">
+                                <div className="flex justify-between items-center">
+                                    <span className="text-gray-400">Current Phase:</span>
+                                    <span className={`text-lg font-bold ${cycleData.phaseColor}`}>
+                                        {cycleData.phase}
+                                    </span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-gray-400">Cycle Progress:</span>
+                                    <span className="text-lg font-bold">{cycleData.cycleProgress}%</span>
+                                </div>
+                                <div className="w-full bg-gray-700 rounded-full h-3 overflow-hidden">
+                                    <div
+                                        className="bg-gradient-to-r from-blue-400 to-purple-500 h-full transition-all"
+                                        style={{ width: `${cycleData.cycleProgress}%` }}
+                                    />
+                                </div>
+                                <p className="text-gray-300 mt-3">{cycleData.phaseDesc}</p>
+                            </div>
+                        </div>
+
+                        {/* Rotation Analysis */}
+                        <div className="bg-gray-800 rounded-xl p-6">
+                            <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
+                                🔀 Money Rotation
+                            </h3>
+                            <div className="space-y-3">
+                                <div className="flex justify-between items-center">
+                                    <span className="text-gray-400">Current Status:</span>
+                                    <span className={`text-lg font-bold ${rotationStatus.color}`}>
+                                        {rotationStatus.status}
+                                    </span>
+                                </div>
+                                <p className="text-gray-300">{rotationStatus.description}</p>
+                                <div className="grid grid-cols-2 gap-4 mt-4">
+                                    <div>
+                                        <div className="text-gray-400 text-sm">BTC Dominance</div>
+                                        <div className="text-xl font-bold">{marketData.btc.dominance}%</div>
+                                    </div>
+                                    <div>
+                                        <div className="text-gray-400 text-sm">USDT Dominance</div>
+                                        <div className="text-xl font-bold">{marketData.usdtDominance}%</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Sentiment */}
+                        <div className="bg-gray-800 rounded-xl p-6">
+                            <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
+                                😊 Market Sentiment
+                            </h3>
+                            <div className="space-y-3">
+                                <div className="flex justify-between items-center">
+                                    <span className="text-gray-400">Fear & Greed Index:</span>
+                                    <span className="text-2xl font-bold text-yellow-400">
+                                        {marketData.fearGreedIndex}
+                                    </span>
+                                </div>
+                                <div className="w-full bg-gray-700 rounded-full h-3 overflow-hidden">
+                                    <div
+                                        className={`h-full transition-all ${
+                                            marketData.fearGreedIndex > 70 ? 'bg-green-500' :
+                                            marketData.fearGreedIndex > 50 ? 'bg-yellow-500' :
+                                            'bg-red-500'
+                                        }`}
+                                        style={{ width: `${marketData.fearGreedIndex}%` }}
+                                    />
+                                </div>
+                                <p className="text-gray-300 mt-3">
+                                    {marketData.fearGreedIndex > 70 ? 
+                                        '🔥 Market is in extreme greed. Consider taking profits or waiting for corrections.' :
+                                     marketData.fearGreedIndex > 50 ? 
+                                        '📈 Market sentiment is bullish. Good time for selective entries.' :
+                                     marketData.fearGreedIndex > 30 ?
+                                        '😐 Market is neutral. Wait for clearer signals.' :
+                                        '😰 Market is fearful. This could be a good accumulation opportunity.'
+                                    }
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Altcoin Season */}
+                        <div className="bg-gray-800 rounded-xl p-6">
+                            <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
+                                🌊 Altcoin Season Index
+                            </h3>
+                            <div className="space-y-3">
+                                <div className="flex justify-between items-center">
+                                    <span className="text-gray-400">Index Score:</span>
+                                    <span className="text-2xl font-bold">{marketData.altcoinSeasonIndex}</span>
+                                </div>
+                                <div className="w-full bg-gray-700 rounded-full h-3 overflow-hidden">
+                                    <div
+                                        className="bg-purple-500 h-full transition-all"
+                                        style={{ width: `${marketData.altcoinSeasonIndex}%` }}
+                                    />
+                                </div>
+                                <p className="text-gray-300 mt-3">
+                                    {marketData.altcoinSeasonIndex > 75 ? 
+                                        '🚀 Strong altcoin season! Alts are outperforming BTC significantly.' :
+                                     marketData.altcoinSeasonIndex > 50 ? 
+                                        '📊 Moderate alt performance. Selective altcoin opportunities available.' :
+                                        '🛡️ Bitcoin season. BTC is outperforming most altcoins.'
+                                    }
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Render App
+        ReactDOM.render(<CryptoAssistant />, document.getElementById('root'));
+    </script>
+</body>
+</html>
